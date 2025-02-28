@@ -11,33 +11,33 @@ A real-time traffic intersection simulation that demonstrates queue data structu
 Realistic Intersection Layout: Complete with lanes, lane dividers, and stop lines
 Multiple Vehicle Types:
 
-Regular Cars
-Ambulances
-Police Cars
-Fire Trucks
+- Regular Cars
+- Ambulances
+- Police Cars
+- Fire Trucks
 
 
 Intelligent Traffic Light System:
 
-Normal cycling between directions
-Priority mode for emergency vehicles
-Congestion detection and handling
+- Normal cycling between directions
+- Priority mode for emergency vehicles
+- Congestion detection and handling
 
 
 Vehicle Behaviors:
 
-Lane following
-Turning (left/right)
-Traffic light obeying
-Vehicle spacing and collision avoidance
-Right-turn-on-red capability
+- Lane following
+- Turning (left/right)
+- Traffic light obeying
+- Vehicle spacing and collision avoidance
+- Right-turn-on-red capability
 
 
 Real-time Statistics:
 
-Vehicle throughput
-Total vehicles
-Vehicles per minute
+- Vehicle throughput
+- Total vehicles
+- Vehicles per minute
 ## Prerequisites
 
 To run this simulation, you need:
