@@ -10,9 +10,9 @@ LanePosition laneVehicles[4][MAX_VEHICLES];
 int vehiclesInLane[4] = {0};
 
 const SDL_Color VEHICLE_COLORS[] = {
-    {0, 0, 255, 255}, // REGULAR_CAR: Blue
+    {223, 197, 123,255}, // REGULAR_CAR: Gold
     {255, 0, 0, 255}, // AMBULANCE: Red
-    {0, 0, 128, 255}, // POLICE_CAR: Dark Blue
+    {6, 228, 228,225}, // POLICE_CAR: SkyBlue
     {255, 69, 0, 255} // FIRE_TRUCK: Orange-Red
 };
 
