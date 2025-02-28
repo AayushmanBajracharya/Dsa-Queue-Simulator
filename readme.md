@@ -6,16 +6,38 @@ A real-time traffic intersection simulation that demonstrates queue data structu
 
 ## Features
 
-- Real-time traffic simulation at a 4-way intersection
-- Multiple vehicle types (regular cars, ambulances, police cars, fire trucks)
-- Dynamic traffic light system with priority management
-- Queue-based traffic management
-- Priority handling for emergency vehicles
-- Special conditions for regular vehicles to skip red lights in certain situations
-- Vehicle turning mechanics (left, right, straight)
-- Visual representation of traffic flow
-- Congestion detection and management
 
+
+Realistic Intersection Layout: Complete with lanes, lane dividers, and stop lines
+Multiple Vehicle Types:
+
+Regular Cars
+Ambulances
+Police Cars
+Fire Trucks
+
+
+Intelligent Traffic Light System:
+
+Normal cycling between directions
+Priority mode for emergency vehicles
+Congestion detection and handling
+
+
+Vehicle Behaviors:
+
+Lane following
+Turning (left/right)
+Traffic light obeying
+Vehicle spacing and collision avoidance
+Right-turn-on-red capability
+
+
+Real-time Statistics:
+
+Vehicle throughput
+Total vehicles
+Vehicles per minute
 ## Prerequisites
 
 To run this simulation, you need:
@@ -102,9 +124,9 @@ The simulation consists of two separate programs:
    - Handles traffic light cycles
 
 ### Vehicle Types
-- Blue: Regular cars
+- Gold: Regular cars
 - Red: Ambulances
-- Dark Blue: Police cars
+- SkyBlue: Police cars
 - Orange-Red: Fire trucks
 
 ### Traffic Management
