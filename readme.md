@@ -1,6 +1,6 @@
 # Traffic Queue Simulator
 
-A real-time traffic intersection simulation that demonstrates queue data structures and traffic management algorithms. The simulation includes different types of vehicles, traffic lights, and dynamic queue management.
+A real-time traffic intersection simulation showcasing queue data structures and advanced traffic management algorithms. The simulation features various vehicle types, traffic signals, and dynamic queue management for an optimized flow of traffic.
 
 ![Traffic Simulation Demo](assets/demo.gif)
 
