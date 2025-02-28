@@ -2,7 +2,7 @@
 
 A real-time traffic intersection simulation showcasing queue data structures and advanced traffic management algorithms. The simulation features various vehicle types, traffic signals, and dynamic queue management for an optimized flow of traffic.
 
-![Traffic Simulation Demo](assets/simulation.gif)
+![Traffic Simulation Demo](/simulation.gif)
 
 ## Features
 
