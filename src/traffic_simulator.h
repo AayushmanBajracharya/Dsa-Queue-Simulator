@@ -1,55 +1,109 @@
-#ifndef TRAFFIC_SIMULATOR_H
-#define TRAFFIC_SIMULATOR_H
+#ifndef TRAFFIC_SIMULATION_H
+#define TRAFFIC_SIMULATION_H
 
-// Constants
-#define MAX_VEHICLES 500
-#define MAX_LANES 10
-#define MAX_ROAD_LENGTH 1000
-#define MAX_SPEED 5
+#include <SDL.h>
+#include <stdbool.h>
 
-// Vehicle status
-#define VEHICLE_ACTIVE 0
-#define VEHICLE_EXITED 1
+#define WINDOW_WIDTH 800
+#define WINDOW_HEIGHT 600
+#define LANE_WIDTH 80
+#define MAX_VEHICLES 10
+#define INTERSECTION_X (WINDOW_WIDTH / 2)
+#define INTERSECTION_Y (WINDOW_HEIGHT / 2)
 
-/**
- * Vehicle structure representing cars, trucks, etc.
- */
+typedef enum {
+    DIRECTION_NORTH,
+    DIRECTION_SOUTH,
+    DIRECTION_EAST,
+    DIRECTION_WEST
+} Direction;
+
+typedef enum {
+    TURN_NONE,
+    TURN_LEFT,
+    TURN_RIGHT
+} TurnDirection;
+
+typedef enum {
+    STATE_MOVING,
+    STATE_STOPPING,
+    STATE_STOPPED,
+    STATE_TURNING
+} VehicleState;
+
+typedef enum {
+    REGULAR_CAR,
+    AMBULANCE,
+    POLICE_CAR,
+    FIRE_TRUCK
+} VehicleType;
+
+typedef enum {
+    RED,
+    GREEN
+} TrafficLightState;
+
+#define TRAFFIC_LIGHT_WIDTH (LANE_WIDTH * 2)
+#define TRAFFIC_LIGHT_HEIGHT (LANE_WIDTH - LANE_WIDTH / 3)
+#define STOP_LINE_WIDTH 5
+
 typedef struct {
-    int id;           // Unique identifier
-    int position;     // Current position on road (0 to length-1)
-    int speed;        // Current speed (positions per time step)
-    int lane;         // Current lane (0 to lanes-1)
-    int type;         // Vehicle type (0: Car, 1: Truck, 2: Motorcycle)
-    int waiting_time; // Time spent waiting/slow
-    int status;       // Status flag (active, exited, etc.)
+    SDL_Rect rect;
+    VehicleType type;
+    Direction direction;
+    TurnDirection turnDirection;
+    VehicleState state;
+    float speed;
+    float x;
+    float y;
+    bool active;
+    float turnAngle;  
+    bool isInRightLane;
+    bool turnProgress;
 } Vehicle;
 
-/**
- * Road structure representing the traffic system
- */
 typedef struct {
-    int lanes;                         // Number of lanes
-    int length;                        // Length of the road
-    int vehicles_count;                // Current number of vehicles on the road
-    int total_vehicles_generated;      // Total vehicles created
-    int total_vehicles_exited;         // Total vehicles that exited
-    Vehicle vehicles[MAX_VEHICLES];    // Array of vehicles
-    int grid[MAX_LANES][MAX_ROAD_LENGTH]; // Grid representation of vehicle positions
-} Road;
+    TrafficLightState state;
+    int timer;
+    SDL_Rect position;
+    Direction direction;
+} TrafficLight;
 
-// Function declarations for traffic_simulator.c
-int init_road(Road *road, int lanes, int length);
-int is_position_occupied(Road *road, int lane, int position);
-void update_traffic(Road *road);
-void display_road(Road *road);
+typedef struct {
+    int vehiclesPassed;
+    int totalVehicles;
+    float vehiclesPerMinute;
+    Uint32 startTime;
+} Statistics;
 
-// Function declarations for generator.c
-int generate_vehicle(Road *road, int probability);
-void init_generator(unsigned int seed, int entry_probability);
+// Queue data structure
+typedef struct Node {
+    Vehicle vehicle;
+    struct Node* next;
+} Node;
 
-// Function declarations for traffic_gui.c
-int init_graphics(Road *road);
-void cleanup_graphics();
-void render_traffic(Road *road, int time_step);
+typedef struct {
+    Node* front;
+    Node* rear;
+    int size;
+} Queue;
 
-#endif /* TRAFFIC_SIMULATOR_H */
+// Declare laneQueues as an external variable
+extern Queue laneQueues[4];
+
+// Function declarations
+void initializeTrafficLights(TrafficLight* lights);
+void updateTrafficLights(TrafficLight* lights);
+Vehicle* createVehicle(Direction direction);
+void updateVehicle(Vehicle* vehicle, TrafficLight* lights);
+void renderSimulation(SDL_Renderer* renderer, Vehicle* vehicles, TrafficLight* lights, Statistics* stats);
+void renderRoads(SDL_Renderer* renderer);
+void renderQueues(SDL_Renderer* renderer);
+
+// Queue functions
+void initQueue(Queue* q);
+void enqueue(Queue* q, Vehicle vehicle);
+Vehicle dequeue(Queue* q);
+int isQueueEmpty(Queue* q);
+
+#endif
