@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -8,7 +7,7 @@ void initializeSDL(SDL_Window **window, SDL_Renderer **renderer) {
     SDL_Init(SDL_INIT_VIDEO);
     *window = SDL_CreateWindow("Traffic Simulation", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
     *renderer = SDL_CreateRenderer(*window, -1, SDL_RENDERER_ACCELERATED);
-    SDL_SetRenderDrawColor(*renderer, 255, 255, 255, 255); // Set background color to white
+    SDL_SetRenderDrawColor(*renderer, 255, 255, 255, 255);
 }
 
 void cleanupSDL(SDL_Window *window, SDL_Renderer *renderer) {
@@ -26,14 +25,15 @@ void handleEvents(bool *running) {
     }
 }
 
-Vehicle readVehicleFromFile(FILE *file) {
+Vehicle readVehicleFromFire(FILE *file) {
     Vehicle vehicle = {0};
-    if (fscanf(file, "%f %f %d %d %d %d %d", 
+    if (fscanf(file, "%f %f %d %d %d %d %d %d", 
            &vehicle.x, &vehicle.y, 
            (int*)&vehicle.direction, 
            (int*)&vehicle.type, 
            (int*)&vehicle.turnDirection, 
            (int*)&vehicle.state, 
+           (int*)&vehicle.canSkipLight,
            &vehicle.speed) == 7) {
         vehicle.active = true;
         
@@ -52,12 +52,26 @@ Vehicle readVehicleFromFile(FILE *file) {
     return vehicle;
 }
 
+void simulationUpdate(Vehicle* vehicles, TrafficLight* lights) {
+    updateLanePositions(vehicles);
+    
+    // Update each vehicle
+    for (int i = 0; i < MAX_VEHICLES; i++) {
+        if (vehicles[i].active) {
+            updateVehicle(&vehicles[i], lights);
+        }
+    }
+    
+    // Update traffic lights
+    updateTrafficLights(lights);
+}
+
 int main(int argc, char *argv[]) {
     SDL_Window *window = NULL;
     SDL_Renderer *renderer = NULL;
     bool running = true;
     Uint32 lastVehicleSpawn = 0;
-    const Uint32 SPAWN_INTERVAL = 500; // Spawn a vehicle every 500ms
+    const Uint32 SPAWN_INTERVAL = 1000;
 
     srand(time(NULL));
 
@@ -129,7 +143,7 @@ int main(int argc, char *argv[]) {
         if (minutes > 0) {
             stats.vehiclesPerMinute = stats.vehiclesPassed / minutes;
         }
-
+        simulationUpdate(vehicles, lights);
         renderSimulation(renderer, vehicles, lights, &stats);
 
         SDL_Delay(16); // Cap at ~60 FPS

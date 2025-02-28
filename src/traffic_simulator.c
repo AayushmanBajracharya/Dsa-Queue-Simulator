@@ -3,10 +3,11 @@
 #include <math.h>
 #include "traffic_simulation.h"
 
-
 // Global queues for lanes
-Queue laneQueues[4];         // Queues for lanes A, B, C, D
-int lanePriorities[4] = {0}; // Priority levels for lanes (0 = normal, 1 = high)
+Queue laneQueues[4];
+int lanePriorities[4] = {0};
+LanePosition laneVehicles[4][MAX_VEHICLES];
+int vehiclesInLane[4] = {0};
 
 const SDL_Color VEHICLE_COLORS[] = {
     {0, 0, 255, 255}, // REGULAR_CAR: Blue
@@ -14,6 +15,25 @@ const SDL_Color VEHICLE_COLORS[] = {
     {0, 0, 128, 255}, // POLICE_CAR: Dark Blue
     {255, 69, 0, 255} // FIRE_TRUCK: Orange-Red
 };
+
+float getDistanceBetweenVehicles(Vehicle *v1, Vehicle *v2)
+{
+    float dx = v1->x - v2->x;
+    float dy = v1->y - v2->y;
+    return sqrt(dx * dx + dy * dy);
+}
+
+int getVehicleLane(Vehicle *vehicle)
+{
+    if (vehicle->direction == DIRECTION_NORTH || vehicle->direction == DIRECTION_SOUTH)
+    {
+        return (vehicle->x < INTERSECTION_X) ? 0 : 1;
+    }
+    else
+    {
+        return (vehicle->y < INTERSECTION_Y) ? 2 : 3;
+    }
+}
 
 void initializeTrafficLights(TrafficLight *lights)
 {
@@ -39,51 +59,142 @@ void initializeTrafficLights(TrafficLight *lights)
         .direction = DIRECTION_WEST};
 }
 
-void updateTrafficLights(TrafficLight *lights) {
+void updateTrafficLights(TrafficLight *lights)
+{
+    static Uint32 lastStateChangeTicks = 0;
+    static int currentPhase = 0;
+    static bool priorityMode = false;
+    static int priorityLane = -1;
+    static Uint32 priorityStartTime = 0;
     Uint32 currentTicks = SDL_GetTicks();
-    static Uint32 lastUpdateTicks = 0;
 
-    if (currentTicks - lastUpdateTicks >= 20000) { // Change every 5 seconds
-        lastUpdateTicks = currentTicks;
+    // Check for priority conditions (special vehicles or congestion)
+    int priorityLaneCandidate = -1;
+    bool hasSpecialVehicle = false;
+    int maxWaitingVehicles = 0;
 
-        int maxPriorityLane = -1;  // Track highest priority lane
-
-        // Update priority status of lanes
-        for (int i = 0; i < 4; i++) {
-            if (laneQueues[i].size > 10) {
-                lanePriorities[i] = 1; // Set high priority
-                if (maxPriorityLane == -1 || laneQueues[i].size > laneQueues[maxPriorityLane].size) {
-                    maxPriorityLane = i; // Find the lane with the most vehicles
-                }
-            } else if (laneQueues[i].size < 5) {
-                lanePriorities[i] = 0; // Reset priority
+    // First pass: check for special vehicles in each lane
+    for (int i = 0; i < 4; i++)
+    {
+        for (int j = 0; j < vehiclesInLane[i]; j++)
+        {
+            Vehicle *vehicle = laneVehicles[i][j].vehicle;
+            if (vehicle && (vehicle->type == AMBULANCE || vehicle->type == POLICE_CAR || vehicle->type == FIRE_TRUCK))
+            {
+                hasSpecialVehicle = true;
+                priorityLaneCandidate = i;
+                // Allow emergency vehicles to pass red lights
+                vehicle->canSkipLight = true;
+                break;
             }
         }
+        if (hasSpecialVehicle)
+            break; // Once we find a special vehicle, no need to check other lanes
 
-        // Assign green light only to the highest priority lane
-        for (int i = 0; i < 4; i++) {
-            lights[i].state = (i == maxPriorityLane) ? GREEN : RED;
-        }
-
-        // If no priority lane, alternate between A&C or B&D
-        static int normalCycle = 0;
-        if (maxPriorityLane == -1) {
-            if (normalCycle % 2 == 0) {
-                lights[DIRECTION_NORTH].state = GREEN;
-                lights[DIRECTION_SOUTH].state = GREEN;
-                lights[DIRECTION_EAST].state = RED;
-                lights[DIRECTION_WEST].state = RED;
-            } else {
-                lights[DIRECTION_EAST].state = GREEN;
-                lights[DIRECTION_WEST].state = GREEN;
-                lights[DIRECTION_NORTH].state = RED;
-                lights[DIRECTION_SOUTH].state = RED;
-            }
-            normalCycle++;
+        // Track the lane with the most vehicles for congestion detection
+        if (vehiclesInLane[i] > maxWaitingVehicles)
+        {
+            maxWaitingVehicles = vehiclesInLane[i];
+            priorityLaneCandidate = i;
         }
     }
-}
 
+    // Determine if we should enter or maintain priority mode
+    if (hasSpecialVehicle || (maxWaitingVehicles > 5 && !priorityMode))
+    {
+        priorityMode = true;
+        priorityLane = priorityLaneCandidate;
+        priorityStartTime = currentTicks;
+
+        // Fix: explicitly set lights based on direction rather than using modulo
+        // This ensures correct pairing of traffic lights
+        if (priorityLane == 0 || priorityLane == 1)
+        { // North or South lane has priority
+            // Give green to North-South, red to East-West
+            lights[DIRECTION_NORTH].state = GREEN;
+            lights[DIRECTION_SOUTH].state = GREEN;
+            lights[DIRECTION_EAST].state = RED;
+            lights[DIRECTION_WEST].state = RED;
+        }
+        else
+        { // East or West lane has priority
+            // Give green to East-West, red to North-South
+            lights[DIRECTION_NORTH].state = RED;
+            lights[DIRECTION_SOUTH].state = RED;
+            lights[DIRECTION_EAST].state = GREEN;
+            lights[DIRECTION_WEST].state = GREEN;
+        }
+
+        printf("Priority mode activated at %d ms. Lane %d prioritized. Reason: %s\n",
+               currentTicks, priorityLane, hasSpecialVehicle ? "Emergency Vehicle" : "Congestion");
+        lastStateChangeTicks = currentTicks; // Reset the state change timer
+    }
+    // Exit priority mode after 10 seconds if no special vehicles remain
+    else if (priorityMode && currentTicks - priorityStartTime >= 10000)
+    {
+        bool stillHasSpecialVehicle = false;
+
+        // Check if special vehicles are still present in the priority lane
+        for (int j = 0; j < vehiclesInLane[priorityLane]; j++)
+        {
+            Vehicle *vehicle = laneVehicles[priorityLane][j].vehicle;
+            if (vehicle && (vehicle->type == AMBULANCE || vehicle->type == POLICE_CAR || vehicle->type == FIRE_TRUCK))
+            {
+                stillHasSpecialVehicle = true;
+                break;
+            }
+        }
+
+        if (!stillHasSpecialVehicle)
+        {
+            priorityMode = false;
+            printf("Priority mode deactivated at %d ms. Returning to normal cycle.\n", currentTicks);
+        }
+        else
+        {
+            // Extend priority mode
+            priorityStartTime = currentTicks;
+        }
+    }
+
+    // Normal traffic light cycle if not in priority mode
+    if (!priorityMode && currentTicks - lastStateChangeTicks >= 5000)
+    {
+        // Toggle between phases (0 = N/S green, E/W red; 1 = N/S red, E/W green)
+        currentPhase = 1 - currentPhase;
+
+        if (currentPhase == 0)
+        { // North/South green, East/West red
+            lights[DIRECTION_NORTH].state = GREEN;
+            lights[DIRECTION_SOUTH].state = GREEN;
+            lights[DIRECTION_EAST].state = RED;
+            lights[DIRECTION_WEST].state = RED;
+        }
+        else
+        { // North/South red, East/West green
+            lights[DIRECTION_NORTH].state = RED;
+            lights[DIRECTION_SOUTH].state = RED;
+            lights[DIRECTION_EAST].state = GREEN;
+            lights[DIRECTION_WEST].state = GREEN;
+        }
+
+        lastStateChangeTicks = currentTicks;
+        printf("State changed at %d ms. Phase: %d, Reason: Normal Cycle\n", currentTicks, currentPhase);
+    }
+
+    // Reset canSkipLight flag for non-emergency vehicles
+    // for (int i = 0; i < 4; i++)
+    // {
+    //     for (int j = 0; j < vehiclesInLane[i]; j++)
+    //     {
+    //         Vehicle *vehicle = laneVehicles[i][j].vehicle;
+    //         if (vehicle && vehicle->type == REGULAR_CAR)
+    //         {
+    //             vehicle->canSkipLight = false;
+    //         }
+    //     }
+    // }
+}
 
 Vehicle *createVehicle(Direction direction)
 {
@@ -110,6 +221,7 @@ Vehicle *createVehicle(Direction direction)
     }
 
     vehicle->active = true;
+    vehicle->canSkipLight = false; // Initialize canSkipLight to false
     // Set speed based on vehicle type
     switch (vehicle->type)
     {
@@ -154,55 +266,58 @@ Vehicle *createVehicle(Direction direction)
     // Fixed spawn positions for each direction
     switch (direction)
     {
-    case DIRECTION_NORTH:                             // Spawns at bottom, moves up
-        vehicle->x = INTERSECTION_X - LANE_WIDTH / 2; // Left lane
-        if (rand() % 2)
-        { // Randomly choose right lane
-            vehicle->x += LANE_WIDTH;
+    case DIRECTION_NORTH: // Spawns at bottom, moves up
+        if (vehicle->turnDirection == TURN_RIGHT)
+        {
+            vehicle->canSkipLight = true;
+            vehicle->x = INTERSECTION_X - LANE_WIDTH / 2 - 30;
+        }
+        else
+        {
+            vehicle->x = INTERSECTION_X - LANE_WIDTH / 2 + 10;
         }
         vehicle->y = WINDOW_HEIGHT - vehicle->rect.h;
-        vehicle->isInRightLane = (vehicle->x > INTERSECTION_X);
         break;
 
-    case DIRECTION_SOUTH:                             // Spawns at top, moves down
-        vehicle->x = INTERSECTION_X - LANE_WIDTH / 2; // Left lane
-        if (rand() % 2)
-        { // Randomly choose right lane
-            vehicle->x += LANE_WIDTH;
+    case DIRECTION_SOUTH: // Spawns at top, moves down
+        if (vehicle->turnDirection == TURN_RIGHT)
+        {
+            vehicle->canSkipLight = true;
+            vehicle->x = INTERSECTION_X + 40;
+        }
+        else
+        {
+            vehicle->x = INTERSECTION_X + 10;
         }
         vehicle->y = 0;
-        vehicle->isInRightLane = (vehicle->x > INTERSECTION_X);
         break;
 
     case DIRECTION_EAST: // Spawns at left, moves right
-        vehicle->x = 0;
-        vehicle->y = INTERSECTION_Y - LANE_WIDTH / 2; // Top lane
-        if (rand() % 2)
-        { // Randomly choose bottom lane
-            vehicle->y += LANE_WIDTH;
+        if (vehicle->turnDirection == TURN_RIGHT)
+        {
+            vehicle->canSkipLight = true;
+            vehicle->y = INTERSECTION_Y - LANE_WIDTH / 2 - 40 + 10;
         }
-        vehicle->isInRightLane = (vehicle->y > INTERSECTION_Y);
+        else
+        {
+            vehicle->y = INTERSECTION_Y - LANE_WIDTH / 2 + 10;
+        }
+        vehicle->x = 0;
         break;
 
     case DIRECTION_WEST: // Spawns at right, moves left
         vehicle->x = WINDOW_WIDTH - vehicle->rect.w;
-        vehicle->y = INTERSECTION_Y - LANE_WIDTH / 2; // Top lane
-        if (rand() % 2)
-        { // Randomly choose bottom lane
-            vehicle->y += LANE_WIDTH;
+        if (vehicle->turnDirection == TURN_RIGHT)
+        {
+            vehicle->canSkipLight = true;
+            vehicle->y = INTERSECTION_Y + 40;
+        }
+        else
+        {
+            vehicle->y = INTERSECTION_Y;
         }
         vehicle->isInRightLane = (vehicle->y > INTERSECTION_Y);
         break;
-    }
-
-    // Center vehicle in lane
-    if (direction == DIRECTION_NORTH || direction == DIRECTION_SOUTH)
-    {
-        vehicle->x += (LANE_WIDTH / 4 - vehicle->rect.w / 2); // Center in lane
-    }
-    else
-    {
-        vehicle->y += (LANE_WIDTH / 4 - vehicle->rect.h / 2); // Center in lane
     }
 
     vehicle->rect.x = (int)vehicle->x;
@@ -211,82 +326,8 @@ Vehicle *createVehicle(Direction direction)
     return vehicle;
 }
 
-#define MIN_GAP 50  // Minimum gap between vehicles
-
-bool isSafeToMove(Vehicle *vehicle, Vehicle vehicles[], int count) {
-    for (int i = 0; i < count; i++) {
-        if (!vehicles[i].active || &vehicles[i] == vehicle) continue;
-
-        // Check if both vehicles are in the same lane & moving in the same direction
-        if (vehicles[i].direction == vehicle->direction) {
-            float distance = 0;
-
-            switch (vehicle->direction) {
-                case DIRECTION_NORTH:
-                    distance = vehicle->y - vehicles[i].y;
-                    break;
-                case DIRECTION_SOUTH:
-                    distance = vehicles[i].y - vehicle->y;
-                    break;
-                case DIRECTION_EAST:
-                    distance = vehicles[i].x - vehicle->x;
-                    break;
-                case DIRECTION_WEST:
-                    distance = vehicle->x - vehicles[i].x;
-                    break;
-            }
-
-            // If another vehicle is too close ahead, stop this vehicle
-            if (distance > 0 && distance < MIN_GAP) {
-                return false; // Not safe to move
-            }
-        }
-    }
-    return true; // Safe to move
-}
-#define STOP_GAP 40  // Minimum gap between stopped vehicles
-
-bool isSafeToStop(Vehicle *vehicle, Vehicle vehicles[], int count) {
-    for (int i = 0; i < count; i++) {
-        if (!vehicles[i].active || &vehicles[i] == vehicle) continue;
-
-        // Check if both vehicles are in the same lane & direction
-        if (vehicles[i].direction == vehicle->direction) {
-            float distance = 0;
-            bool sameLane = false;
-
-            switch (vehicle->direction) {
-                case DIRECTION_NORTH:
-                    distance = vehicle->y - vehicles[i].y;
-                    sameLane = (fabs(vehicle->x - vehicles[i].x) < vehicle->rect.w);
-                    break;
-                case DIRECTION_SOUTH:
-                    distance = vehicles[i].y - vehicle->y;
-                    sameLane = (fabs(vehicle->x - vehicles[i].x) < vehicle->rect.w);
-                    break;
-                case DIRECTION_EAST:
-                    distance = vehicles[i].x - vehicle->x;
-                    sameLane = (fabs(vehicle->y - vehicles[i].y) < vehicle->rect.h);
-                    break;
-                case DIRECTION_WEST:
-                    distance = vehicle->x - vehicles[i].x;
-                    sameLane = (fabs(vehicle->y - vehicles[i].y) < vehicle->rect.h);
-                    break;
-            }
-
-            // If another vehicle is already stopped too close ahead, return false
-            if (sameLane && distance > 0 && distance < STOP_GAP) {
-                return false;
-            }
-        }
-    }
-    return true; // Safe to stop
-}
-
-
 void updateVehicle(Vehicle *vehicle, TrafficLight *lights)
 {
-    
     if (!vehicle->active)
         return;
 
@@ -294,6 +335,7 @@ void updateVehicle(Vehicle *vehicle, TrafficLight *lights)
     bool shouldStop = false;
     float stopDistance = 40.0f;
     float turnPoint = 0;
+    const float MIN_VEHICLE_DISTANCE = 40.0f;
     bool hasEmergencyPriority = (vehicle->type != REGULAR_CAR);
 
     // Calculate stop line based on direction
@@ -301,68 +343,113 @@ void updateVehicle(Vehicle *vehicle, TrafficLight *lights)
     {
     case DIRECTION_NORTH:
         stopLine = INTERSECTION_Y + LANE_WIDTH + 40;
-        if (vehicle->turnDirection == TURN_LEFT)
+        // Check for vehicles ahead in the same lane
+        for (int i = 0; i < vehiclesInLane[getVehicleLane(vehicle)]; i++)
         {
-            turnPoint = INTERSECTION_Y - LANE_WIDTH / 4;
+            Vehicle *other = laneVehicles[getVehicleLane(vehicle)][i].vehicle;
+            if (other != vehicle && other->direction == vehicle->direction)
+            {
+                float distance = vehicle->y - other->y;
+                if (distance > 0 && distance < MIN_VEHICLE_DISTANCE && !vehicle->canSkipLight)
+                {
+                    shouldStop = true;
+                    stopLine = other->y + other->rect.h + 5;
+                    break;
+                }
+            }
         }
-        else if (vehicle->turnDirection == TURN_RIGHT)
+
+        switch (vehicle->turnDirection)
         {
-            turnPoint = INTERSECTION_Y + LANE_WIDTH / 4;
-        }
-        else
-        {
-            turnPoint = INTERSECTION_Y;
+        case TURN_LEFT:
+            turnPoint = INTERSECTION_X - LANE_WIDTH - 40;
+            break;
+        case TURN_RIGHT:
+            turnPoint = INTERSECTION_X + LANE_WIDTH + 40;
+            break;
         }
         break;
     case DIRECTION_SOUTH:
         stopLine = INTERSECTION_Y - LANE_WIDTH - 40;
-        if (vehicle->turnDirection == TURN_LEFT)
+        for (int i = 0; i < vehiclesInLane[getVehicleLane(vehicle)]; i++)
         {
-            turnPoint = INTERSECTION_Y + LANE_WIDTH / 4;
+            Vehicle *other = laneVehicles[getVehicleLane(vehicle)][i].vehicle;
+            if (other != vehicle && other->direction == vehicle->direction)
+            {
+                float distance = other->y - vehicle->y;
+                if (distance > 0 && distance < MIN_VEHICLE_DISTANCE && !vehicle->canSkipLight)
+                {
+                    shouldStop = true;
+                    stopLine = other->y - vehicle->rect.h - 5;
+                    break;
+                }
+            }
         }
-        else if (vehicle->turnDirection == TURN_RIGHT)
+        switch (vehicle->turnDirection)
         {
-            turnPoint = INTERSECTION_Y - LANE_WIDTH / 4;
-        }
-        else
-        {
-            turnPoint = INTERSECTION_Y;
+        case TURN_LEFT:
+            turnPoint = INTERSECTION_X + LANE_WIDTH + 40;
+            break;
+        case TURN_RIGHT:
+            turnPoint = INTERSECTION_X - LANE_WIDTH - 40;
+            break;
         }
         break;
     case DIRECTION_EAST:
         stopLine = INTERSECTION_X - LANE_WIDTH - 40;
-        if (vehicle->turnDirection == TURN_LEFT)
+        for (int i = 0; i < vehiclesInLane[getVehicleLane(vehicle)]; i++)
         {
-            turnPoint = INTERSECTION_X + LANE_WIDTH / 4;
+            Vehicle *other = laneVehicles[getVehicleLane(vehicle)][i].vehicle;
+            if (other != vehicle && other->direction == vehicle->direction)
+            {
+                float distance = other->x - vehicle->x;
+                if (distance > 0 && distance < MIN_VEHICLE_DISTANCE && !vehicle->canSkipLight)
+                {
+                    shouldStop = true;
+                    stopLine = other->x - vehicle->rect.w - 5;
+                    break;
+                }
+            }
         }
-        else if (vehicle->turnDirection == TURN_RIGHT)
+        switch (vehicle->turnDirection)
         {
-            turnPoint = INTERSECTION_X - LANE_WIDTH / 4;
-        }
-        else
-        {
-            turnPoint = INTERSECTION_X;
+        case TURN_LEFT:
+            turnPoint = INTERSECTION_Y + LANE_WIDTH + 40;
+            break;
+        case TURN_RIGHT:
+            turnPoint = INTERSECTION_Y - LANE_WIDTH - 40;
+            break;
         }
         break;
     case DIRECTION_WEST:
         stopLine = INTERSECTION_X + LANE_WIDTH + 40;
-        if (vehicle->turnDirection == TURN_LEFT)
+        for (int i = 0; i < vehiclesInLane[getVehicleLane(vehicle)]; i++)
         {
-            turnPoint = INTERSECTION_X - LANE_WIDTH / 4;
+            Vehicle *other = laneVehicles[getVehicleLane(vehicle)][i].vehicle;
+            if (other != vehicle && other->direction == vehicle->direction)
+            {
+                float distance = vehicle->x - other->x;
+                if (distance > 0 && distance < MIN_VEHICLE_DISTANCE && !vehicle->canSkipLight)
+                {
+                    shouldStop = true;
+                    stopLine = other->x + other->rect.w + 5;
+                    break;
+                }
+            }
         }
-        else if (vehicle->turnDirection == TURN_RIGHT)
+        switch (vehicle->turnDirection)
         {
-            turnPoint = INTERSECTION_X + LANE_WIDTH / 4;
+        case TURN_LEFT:
+            turnPoint = INTERSECTION_Y - LANE_WIDTH - 40;
+            break;
+        case TURN_RIGHT:
+            turnPoint = INTERSECTION_Y + LANE_WIDTH + 40;
+            break;
         }
-        else
-        {
-            turnPoint = INTERSECTION_X;
-        }
-        break;
     }
 
     // Check if vehicle should stop based on traffic lights
-    if (!hasEmergencyPriority)
+    if (!shouldStop && !vehicle->canSkipLight)
     {
         switch (vehicle->direction)
         {
@@ -400,6 +487,7 @@ void updateVehicle(Vehicle *vehicle, TrafficLight *lights)
             vehicle->speed = 0;
         }
     }
+
     else if (vehicle->state == STATE_STOPPED && !shouldStop)
     {
         vehicle->state = STATE_MOVING;
@@ -449,16 +537,16 @@ void updateVehicle(Vehicle *vehicle, TrafficLight *lights)
     switch (vehicle->direction)
     {
     case DIRECTION_NORTH:
-        atTurnPoint = vehicle->y <= turnPoint;
+        atTurnPoint = vehicle->y <= INTERSECTION_Y;
         break;
     case DIRECTION_SOUTH:
-        atTurnPoint = vehicle->y >= turnPoint;
+        atTurnPoint = vehicle->y >= INTERSECTION_Y;
         break;
     case DIRECTION_EAST:
-        atTurnPoint = vehicle->x >= turnPoint;
+        atTurnPoint = vehicle->x >= INTERSECTION_X;
         break;
     case DIRECTION_WEST:
-        atTurnPoint = vehicle->x <= turnPoint;
+        atTurnPoint = vehicle->x <= INTERSECTION_X;
         break;
     }
 
@@ -495,18 +583,6 @@ void updateVehicle(Vehicle *vehicle, TrafficLight *lights)
     {
         // Calculate turn angle based on vehicle type
         float turnSpeed = 1.0f;
-        switch (vehicle->type)
-        {
-        case AMBULANCE:
-        case POLICE_CAR:
-            turnSpeed = 2.0f;
-            break;
-        case FIRE_TRUCK:
-            turnSpeed = 1.5f;
-            break;
-        default:
-            turnSpeed = 1.0f;
-        }
 
         vehicle->turnAngle += turnSpeed;
         vehicle->turnProgress = vehicle->turnAngle / 90.0f;
@@ -565,6 +641,16 @@ void updateVehicle(Vehicle *vehicle, TrafficLight *lights)
             break;
         }
     }
+    // Update rectangle position
+    vehicle->rect.x = (int)vehicle->x;
+    vehicle->rect.y = (int)vehicle->y;
+
+    // Check if vehicle has left the screen
+    if (vehicle->x < -100 || vehicle->x > WINDOW_WIDTH + 100 ||
+        vehicle->y < -100 || vehicle->y > WINDOW_HEIGHT + 100)
+    {
+        vehicle->active = false;
+    }
 
     // Update rectangle position
     vehicle->rect.x = (int)vehicle->x;
@@ -575,6 +661,46 @@ void updateVehicle(Vehicle *vehicle, TrafficLight *lights)
         vehicle->y < -100 || vehicle->y > WINDOW_HEIGHT + 100)
     {
         vehicle->active = false;
+    }
+}
+
+void updateLanePositions(Vehicle *vehicles)
+{
+    // Reset lane tracking
+    for (int i = 0; i < 4; i++)
+    {
+        vehiclesInLane[i] = 0;
+    }
+
+    // Update lane positions for active vehicles
+    for (int i = 0; i < MAX_VEHICLES; i++)
+    {
+        if (vehicles[i].active)
+        {
+            int lane = getVehicleLane(&vehicles[i]);
+            float pos;
+
+            // Calculate position along the lane
+            switch (vehicles[i].direction)
+            {
+            case DIRECTION_NORTH:
+                pos = vehicles[i].y;
+                break;
+            case DIRECTION_SOUTH:
+                pos = -vehicles[i].y;
+                break;
+            case DIRECTION_EAST:
+                pos = -vehicles[i].x;
+                break;
+            case DIRECTION_WEST:
+                pos = vehicles[i].x;
+                break;
+            }
+
+            laneVehicles[lane][vehiclesInLane[lane]].position = pos;
+            laneVehicles[lane][vehiclesInLane[lane]].vehicle = &vehicles[i];
+            vehiclesInLane[lane]++;
+        }
     }
 }
 
@@ -705,28 +831,24 @@ void enqueue(Queue *q, Vehicle vehicle)
     q->size++;
 }
 
-Vehicle dequeue(Queue *q) {
-    if (q->front == NULL) {
+Vehicle dequeue(Queue *q)
+{
+    if (q->front == NULL)
+    {
         Vehicle emptyVehicle = {0};
         return emptyVehicle;
     }
-    
     Node *temp = q->front;
     Vehicle vehicle = temp->vehicle;
-    
     q->front = q->front->next;
-    if (q->front == NULL) {
+    if (q->front == NULL)
+    {
         q->rear = NULL;
     }
-    
     free(temp);
     q->size--;
-
-    // Mark vehicle as inactive after it exits
-    vehicle.active = false;
     return vehicle;
 }
-
 
 int isQueueEmpty(Queue *q)
 {
