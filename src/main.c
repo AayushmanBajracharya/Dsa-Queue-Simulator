@@ -1,147 +1,140 @@
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <signal.h>
-#include "traffic_simulator.h"
+#include <time.h>
+#include "traffic_simulation.h"
 
-// Global variables
-Road road;
-int running = 1;
-int time_step = 0;
-int entry_probability = 20; // Default 20% chance of new vehicle per step
-int use_graphics = 1;      // By default, use graphical display
-
-// Signal handler for graceful termination
-void handle_signal(int sig) {
-    printf("\nShutting down traffic simulator...\n");
-    running = 0;
+void initializeSDL(SDL_Window **window, SDL_Renderer **renderer) {
+    SDL_Init(SDL_INIT_VIDEO);
+    *window = SDL_CreateWindow("Traffic Simulation", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
+    *renderer = SDL_CreateRenderer(*window, -1, SDL_RENDERER_ACCELERATED);
+    SDL_SetRenderDrawColor(*renderer, 255, 255, 255, 255); // Set background color to white
 }
 
-// Display usage information
-void display_usage(const char* program_name) {
-    printf("Usage: %s [options]\n", program_name);
-    printf("Options:\n");
-    printf("  -l <lanes>     Number of lanes (default: 3)\n");
-    printf("  -r <length>    Road length (default: 100)\n");
-    printf("  -p <prob>      Entry probability (0-100, default: 20)\n");
-    printf("  -s <seed>      Random seed (default: based on time)\n");
-    printf("  -t <delay>     Delay between steps in milliseconds (default: 200)\n");
-    printf("  -g <0|1>       Use graphics (0=off, 1=on, default: 1)\n");
-    printf("  -h             Display this help message\n");
+void cleanupSDL(SDL_Window *window, SDL_Renderer *renderer) {
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+}
+
+void handleEvents(bool *running) {
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT) {
+            *running = false;
+        }
+    }
+}
+
+Vehicle readVehicleFromFile(FILE *file) {
+    Vehicle vehicle = {0};
+    if (fscanf(file, "%f %f %d %d %d %d %d", 
+           &vehicle.x, &vehicle.y, 
+           (int*)&vehicle.direction, 
+           (int*)&vehicle.type, 
+           (int*)&vehicle.turnDirection, 
+           (int*)&vehicle.state, 
+           &vehicle.speed) == 7) {
+        vehicle.active = true;
+        
+        // Set dimensions based on direction
+        if (vehicle.direction == DIRECTION_NORTH || vehicle.direction == DIRECTION_SOUTH) {
+            vehicle.rect.w = 20;
+            vehicle.rect.h = 30;
+        } else {
+            vehicle.rect.w = 30;
+            vehicle.rect.h = 20;
+        }
+        
+        vehicle.rect.x = (int)vehicle.x;
+        vehicle.rect.y = (int)vehicle.y;
+    }
+    return vehicle;
 }
 
 int main(int argc, char *argv[]) {
-    // Default configuration
-    int lanes = 3;
-    int road_length = 100;
-    int delay_ms = 200;
-    unsigned int seed = 0;
-    
-    // Parse command line arguments
-    int opt;
-    while ((opt = getopt(argc, argv, "l:r:p:s:t:g:h")) != -1) {
-        switch (opt) {
-            case 'l':
-                lanes = atoi(optarg);
-                break;
-            case 'r':
-                road_length = atoi(optarg);
-                break;
-            case 'p':
-                entry_probability = atoi(optarg);
-                break;
-            case 's':
-                seed = (unsigned int)atoi(optarg);
-                break;
-            case 't':
-                delay_ms = atoi(optarg);
-                break;
-            case 'g':
-                use_graphics = atoi(optarg);
-                break;
-            case 'h':
-                display_usage(argv[0]);
-                return 0;
-            default:
-                display_usage(argv[0]);
-                return 1;
-        }
+    SDL_Window *window = NULL;
+    SDL_Renderer *renderer = NULL;
+    bool running = true;
+    Uint32 lastVehicleSpawn = 0;
+    const Uint32 SPAWN_INTERVAL = 500; // Spawn a vehicle every 500ms
+
+    srand(time(NULL));
+
+    initializeSDL(&window, &renderer);
+
+    // Initialize vehicles
+    Vehicle vehicles[MAX_VEHICLES] = {0};
+    int vehicleCount = 0;
+
+    // Initialize traffic lights
+    TrafficLight lights[4];
+    initializeTrafficLights(lights);
+
+    // Initialize statistics
+    Statistics stats = {
+        .vehiclesPassed = 0,
+        .totalVehicles = 0,
+        .vehiclesPerMinute = 0,
+        .startTime = SDL_GetTicks()
+    };
+
+    // Initialize queues
+    for (int i = 0; i < 4; i++) {
+        initQueue(&laneQueues[i]);
     }
-    
-    // Validate parameters
-    if (lanes <= 0 || lanes > MAX_LANES) {
-        printf("Error: Number of lanes must be between 1 and %d\n", MAX_LANES);
-        return 1;
-    }
-    
-    if (road_length <= 0 || road_length > MAX_ROAD_LENGTH) {
-        printf("Error: Road length must be between 1 and %d\n", MAX_ROAD_LENGTH);
-        return 1;
-    }
-    
-    // Set up signal handlers for graceful termination
-    signal(SIGINT, handle_signal);
-    signal(SIGTERM, handle_signal);
-    
-    // Initialize the system
-    init_generator(seed, entry_probability);
-    init_road(&road, lanes, road_length);
-    
-    // Initialize graphics if requested
-    if (use_graphics) {
-        if (init_graphics(&road) != 0) {
-            printf("Failed to initialize graphics, falling back to text mode.\n");
-            use_graphics = 0;
-        }
-    }
-    
-    printf("Traffic Simulator Started\n");
-    printf("----------------------------------------\n");
-    printf("Road configuration: %d lanes, %d units long\n", lanes, road_length);
-    printf("Press Ctrl+C to stop the simulation\n");
-    printf("----------------------------------------\n\n");
-    
-    // Main simulation loop
+
     while (running) {
-        time_step++;
-        
-        // Generate new vehicles
-        generate_vehicle(&road, entry_probability);
-        
-        // Update vehicle positions and behaviors
-        update_traffic(&road);
-        
-        // Display current state
-        if (use_graphics) {
-            // Use graphical display
-            render_traffic(&road, time_step);
-        } else {
-            // Use text-based display
-            printf("\033[2J\033[H"); // Clear screen (ANSI escape code)
-            printf("Time step: %d | Vehicles: %d | Total created: %d | Total exited: %d\n\n", 
-                   time_step, road.vehicles_count, road.total_vehicles_generated, 
-                   road.total_vehicles_exited);
-                   
-            display_road(&road);
+        handleEvents(&running);
+
+        // Spawn new vehicles periodically
+        Uint32 currentTime = SDL_GetTicks();
+        if (currentTime - lastVehicleSpawn >= SPAWN_INTERVAL && vehicleCount < MAX_VEHICLES) {
+            Direction spawnDirection = (Direction)(rand() % 4);
+            Vehicle* newVehicle = createVehicle(spawnDirection);
+            
+            // Find empty slot for new vehicle
+            for (int i = 0; i < MAX_VEHICLES; i++) {
+                if (!vehicles[i].active) {
+                    vehicles[i] = *newVehicle;
+                    vehicles[i].active = true;
+                    vehicleCount++;
+                    stats.totalVehicles++;
+                    break;
+                }
+            }
+            
+            free(newVehicle);
+            lastVehicleSpawn = currentTime;
         }
-        
-        // Small delay between steps
-        usleep(delay_ms * 1000);
+
+        // Update vehicles
+        for (int i = 0; i < MAX_VEHICLES; i++) {
+            if (vehicles[i].active) {
+                updateVehicle(&vehicles[i], lights);
+
+                // Check if vehicle has passed through intersection
+                if (!vehicles[i].active) {
+                    stats.vehiclesPassed++;
+                    vehicleCount--;
+                }
+            }
+        }
+
+        // Update traffic lights
+        updateTrafficLights(lights);
+
+        // Update statistics
+        float minutes = (SDL_GetTicks() - stats.startTime) / 60000.0f;
+        if (minutes > 0) {
+            stats.vehiclesPerMinute = stats.vehiclesPassed / minutes;
+        }
+
+        renderSimulation(renderer, vehicles, lights, &stats);
+
+        SDL_Delay(16); // Cap at ~60 FPS
     }
-    
-    // Clean up graphics resources
-    if (use_graphics) {
-        cleanup_graphics();
-    }
-    
-    // Display final statistics
-    printf("\nSimulation Summary:\n");
-    printf("Total time steps: %d\n", time_step);
-    printf("Total vehicles generated: %d\n", road.total_vehicles_generated);
-    printf("Total vehicles that exited: %d\n", road.total_vehicles_exited);
-    printf("Vehicles still on road: %d\n", road.vehicles_count);
-    printf("Average flow rate: %.2f vehicles/time step\n", 
-           (float)road.total_vehicles_exited / time_step);
-    
+
+    cleanupSDL(window, renderer);
     return 0;
 }
